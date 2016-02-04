@@ -1,0 +1,418 @@
+Function Description
+====================
+Fri Aug 20 14:16:24  2004
+ 
+Overview of all Functions
+-------------------------
+
+PROFIDP_GetEntry       - Initialize driver's jump table 
+PROFIDP_Init           - Allocate and return low-level handle, initialize hardware 
+PROFIDP_Exit           - De-initialize hardware and clean up memory 
+PROFIDP_Read           - Do nothing 
+PROFIDP_Write          - Do nothing 
+PROFIDP_SetStat        - Set the driver status 
+PROFIDP_GetStat        - Get the driver status 
+PROFIDP_BlockRead      - Read data from a Profibus channel (Slave) 
+PROFIDP_BlockWrite     - Write data to a Profibus channel (Slave) 
+PROFIDP_Irq            - Interrupt service routine 
+PROFIDP_Info           - Get information about hardware and driver requirements 
+ 
+
+Function PROFIDP_GetEntry()
+---------------------------
+
+Syntax:
+    #ifdef _ONE_NAMESPACE_PER_DRIVER_
+        extern void LL_GetEntry( LL_ENTRY* drvP )
+    #else
+        extern void __PROFIDP_GetEntry( LL_ENTRY* drvP )
+    #endif
+
+Description:
+    Initialize driver's jump table
+
+Input:
+    ---
+
+Output:
+    drvP  pointer to the initialized jump table structure
+
+
+Function PROFIDP_Init()
+-----------------------
+
+Syntax:
+    static int32 PROFIDP_Init(
+        DESC_SPEC       *descP,
+        OSS_HANDLE      *osHdl,
+        MACCESS         *ma,
+        OSS_SEM_HANDLE  *devSemHdl,
+        OSS_IRQ_HANDLE  *irqHdl,
+        LL_HANDLE       **llHdlP
+    )
+
+Description:
+    Allocate and return low-level handle, initialize hardware
+
+    The function initializes the device with the 
+    definitions made in the descriptor. The interrupt 
+    is disabled.
+
+    The following descriptor keys are used:
+
+    Descriptor key          Default          Range
+    --------------------    ---------------  -------------
+    DEBUG_LEVEL_DESC        OSS_DBG_DEFAULT  see dbg.h
+    DEBUG_LEVEL             OSS_DBG_DEFAULT  see dbg.h
+    ID_CHECK                0                0..1 
+
+    max number of slaves:
+    MAX_NUM_SLAVES          125              0..DP_MAX_NUMBER_SLAVES
+
+    lowest slave address:
+    LOWEST_SL_ADDR          out of config    0..
+                            file             DP_MAX_NUMBER_SLAVES
+
+    max number of slave diag entries:
+    MAX_SLAVE_DIAG_ENTRIES  125              0..max
+
+    max data length of one diag entry:
+    MAX_SLAVE_DIAG_LEN      244              DP_MIN_SLAVE_DIAG_LEN..
+                                             DP_MAX_SLAVE_DIAG_DATA_LEN
+
+    clear outputs when entering CLEAR state:
+    CLEAR_OUTPUTS           PB_TRUE           PB_TRUE, PB_FALSE
+
+    automatically respond to M2 services:
+    AUTO_REMOTE_SERVICE     0xe0             see pb_dp.h
+
+    set cyclic data transfer state:
+    CYCLC_DATA_TRANSFER     PB_TRUE          PB_TRUE, PB_FALSE
+
+    act as responder M1 or M2
+    MASTER_CLASS_2          PB_FALSE         PB_TRUE, PB_FALSE
+
+    number of elements in CON/IND buf:
+    CON_IND_BUF_EL          127              0..max
+
+Input:
+    descSpec   pointer to descriptor data
+    osHdl      oss handle
+    ma         hardware access handle
+    devSemHdl  device semaphore handle
+    irqHdl     irq handle
+
+Output:
+    llHdlP     pointer to low-level driver handle
+    return     success (0) or error code
+
+
+Function PROFIDP_Exit()
+-----------------------
+
+Syntax:
+    static int32 PROFIDP_Exit(
+       LL_HANDLE    **llHdlP
+    )
+
+Description:
+    De-initialize hardware and clean up memory
+
+    The function deinitializes the device by resetting the 
+    onboard Profibus controller. The interrupt is disabled.
+
+Input:
+    llHdlP    pointer to low-level driver handle
+
+Output:
+    return    success (0) or error code
+
+
+Function PROFIDP_Read()
+-----------------------
+
+Syntax:
+    static int32 PROFIDP_Read(
+        LL_HANDLE *llHdl,
+        int32 ch,
+        int32 *valueP
+    )
+
+Description:
+    Do nothing
+
+Input:
+    llHdl    low-level handle
+    ch       current channel
+
+Output:
+    valueP   read value
+    return   error code
+
+
+Function PROFIDP_Write()
+------------------------
+
+Syntax:
+    static int32 PROFIDP_Write(
+        LL_HANDLE *llHdl,
+        int32 ch,
+        int32 value
+    )
+
+Description:
+    Do nothing
+
+Input:
+    llHdl    low-level handle
+    ch       current channel
+    value    value to write 
+
+Output:
+    return   error code
+
+
+Function PROFIDP_SetStat()
+--------------------------
+
+Syntax:
+    static int32 PROFIDP_SetStat(
+        LL_HANDLE *llHdl,
+        int32  code,
+        int32  ch,
+        INT32_OR_64 value32_or_64
+    )
+
+Description:
+    Set the driver status
+
+    The following status codes are supported:
+
+    Code                        Description                 Values
+    ---------------------------  --------------------------------- ----------
+    M_LL_DEBUG_LEVEL             driver debug level                see dbg.h
+    M_MK_IRQ_ENABLE              interrupt enable                  0..1
+    M_LL_IRQ_COUNT               interrupt counter                 0..max
+
+    PROFIDP_SIG_ON_EVENT_SET     install signal                    UOS_SIG_USR1,
+                                                     UOS_SIG_USR2
+    PROFIDP_SIG_ON_EVENT_CLR     uninstall signal                  UOS_SIG_USR1,
+                                                     UOS_SIG_USR2
+    PROFIDP_BLK_CONFIG           configure PROFDP device           -
+    PROFIDP_BLK_SEND_REQ_RES     send request or response          -
+    PROFIDP_BLK_RVC_CON_IND      get CON/IND out of buffer         -
+    PROFIDP_BLK_RVC_CON_IND_WAIT wait until CON/IND is available   -
+                   in buffer and read it out
+    PROFIDP_BLK_SET_ALL_CH       write values to all output ch.    -
+    PROFIDP_BLK_START_STACK      start stack STOP-CLEAR-OPERATE    -
+    PROFIDP_BLK_STOP_STACK       stop stack CLEAR-STOP             -
+    PROFIDP_BLK_DATA_TRANSFER    do one Data Transfer cycle        -
+    ROFIDP_SET_STACK_STOP        set stack state to STOP           non
+    PROFIDP_SET_STACK_CLEAR      set stack state to CLEAR          non
+    PROFIDP_SET_STACK_OPERATE    set stack state to OPERATE        non
+    PROFIDP_WAIT_TIMEOUT         set timeout (sec.) for            0..max
+                   PROFIDP_BLK_RVC_CON_IND_WAIT
+
+Input:
+    llHdl      low-level handle
+    code       status code
+    ch         current channel
+    value32_or_64   data or pointer to block data structure
+               (M_SG_BLOCK*)
+
+Output:
+    return     success (0) or error code
+
+
+Function PROFIDP_GetStat()
+--------------------------
+
+Syntax:
+    static int32 PROFIDP_GetStat(
+        LL_HANDLE *llHdl,
+        int32  code,
+        int32  ch,
+        INT32_OR_64 *value32_or_64P
+    )
+
+Description:
+    Get the driver status
+
+    The following status codes are supported:
+
+    Code                     Description                 Values
+    -----------------------------  --------------------------  ----------
+    M_LL_DEBUG_LEVEL               driver debug level          see dbg.h
+    M_LL_CH_NUMBER                 number of channels          0..
+                                                      DP_MAX_NUMBER_SLAVES
+    M_LL_CH_DIR                    direction of curr. chan.    M_CH_???
+    M_LL_CH_TYP                    description of curr. chan.  M_CH_BINARY
+    M_LL_IRQ_COUNT                 interrupt counter           0..max
+    M_LL_ID_CHECK                  EEPROM is checked           0..1
+    M_LL_ID_SIZE                   EEPROM size [bytes]         128
+    M_LL_BLK_ID_DATA               EEPROM raw data             -
+    M_MK_BLK_REV_ID                ident function table ptr    -
+    PROFIDP_BLK_GET_ALL_CH         read all input channels     -
+    PROFIDP_BLK_GET_DIAG           do Get_Slave_Diag service   -
+    PROFIDP_BLK_GET_SLAVE_DIAG     get diag for current ch.    
+    PROFIDP_WAIT_TIMEOUT           get timeout (sec.) for      0..max
+                          PROFIDP_BLK_RVC_CON_IND_WAIT
+    PROFIDP_NUM_CON_IND            get number of CON/IND in    0..max
+                          buffer
+    PROFIDP_FM2_REASON             get reason of FMB_FM2_EVENT see below
+    Bit  7   6   5   4   3   2   1   0
+    +-------------------------------+
+    |RSV|   |   |   |   |   |   |RSV|
+    +-------------------------------+
+       +   +   +   +   +   +--- duplicate recognized address
+       |   |   |   |   +------- phys. layer is malfunctioning
+       |   |   |   +----------- timeout on bus detected
+       |   |   +--------------- no receiver synchronization
+       |   +------------------- station out of ring
+       +----------------------- new station in ring 
+
+    PROFIDP_BUFF_OVERFLOW          get information about buffer 0 = ok, 
+                          overflow                     1 = overflow
+    PROFIDP_MAX_INPUT_LEN          get max slave input length   0..max
+    PROFIDP_MAX_OUTPUT_LEN         get max slave output length  0..max
+    PROFIDP_CH_INPUT_LEN           get slave input length       0..max
+    PROFIDP_CH_OUTPUT_LEN          get slave output length      0..max
+
+Input:
+    llHdl      low-level handle
+    code       status code
+    ch         current channel
+    value32_or_64P   pointer to block data structure (M_SG_BLOCK*)
+
+Output:
+    value32_or_64P   data pointer or
+               pointer to block data structure (M_SG_BLOCK)  (*) 
+    return     success (0) or error code
+    (*) = for block status codes
+
+
+Function PROFIDP_BlockRead()
+----------------------------
+
+Syntax:
+    static int32 PROFIDP_BlockRead(
+         LL_HANDLE *llHdl,
+         int32     ch,
+         void      *buf,
+         int32     size,
+         int32     *nbrRdBytesP
+    )
+
+Description:
+    Read data from a Profibus channel (Slave)
+
+Input:
+    llHdl        low-level handle
+    ch           current channel
+    buf          data buffer
+    size         data buffer size
+
+Output:
+    nbrRdBytesP  number of read bytes
+    return       success (0) or error code
+
+
+Function PROFIDP_BlockWrite()
+-----------------------------
+
+Syntax:
+    static int32 PROFIDP_BlockWrite(
+         LL_HANDLE *llHdl,
+         int32     ch,
+         void      *buf,
+         int32     size,
+         int32     *nbrWrBytesP
+    )
+
+Description:
+    Write data to a Profibus channel (Slave)
+
+Input:
+    llHdl        low-level handle
+    ch           current channel
+    buf          data buffer
+    size         data buffer size
+
+Output:
+    nbrWrBytesP  number of written bytes
+    return       success (0) or error code
+
+
+Function PROFIDP_Irq()
+----------------------
+
+Syntax:
+    static int32 PROFIDP_Irq(
+       LL_HANDLE *llHdl
+    )
+
+Description:
+    Interrupt service routine
+
+    The interrupt is triggered to inform the host on a 
+    confirmation or indication.
+
+    If the driver can detect the interrupt's cause it returns
+    LL_IRQ_DEVICE or LL_IRQ_DEV_NOT, otherwise LL_IRQ_UNKNOWN.
+
+Input:
+    llHdl    low-level handle
+
+Output:
+    return   LL_IRQ_DEVICE    irq caused by device
+             LL_IRQ_DEV_NOT   irq not caused by device
+             LL_IRQ_UNKNOWN   unknown
+
+
+Function PROFIDP_Info()
+-----------------------
+
+Syntax:
+    static int32 PROFIDP_Info(
+       int32  infoType,
+       ...
+    )
+
+Description:
+    Get information about hardware and driver requirements
+
+    The following info codes are supported:
+
+    Code                      Description
+    ------------------------  -----------------------------
+    LL_INFO_HW_CHARACTER      hardware characteristics
+    LL_INFO_ADDRSPACE_COUNT   nr of required address spaces
+    LL_INFO_ADDRSPACE         address space information
+    LL_INFO_IRQ               interrupt required
+    LL_INFO_LOCKMODE          process lock mode required
+
+    The LL_INFO_HW_CHARACTER code returns all address and 
+    data modes (ORed) which are supported by the hardware
+    (MDIS_MAxx, MDIS_MDxx).
+
+    The LL_INFO_ADDRSPACE_COUNT code returns the number
+    of address spaces used by the driver.
+
+    The LL_INFO_ADDRSPACE code returns information about one
+    specific address space (MDIS_MAxx, MDIS_MDxx). The returned 
+    data mode represents the widest hardware access used by 
+    the driver.
+
+    The LL_INFO_IRQ code returns whether the driver supports an
+    interrupt routine (TRUE or FALSE).
+
+    The LL_INFO_LOCKMODE code returns which process locking
+    mode the driver needs (LL_LOCK_xxx).
+
+Input:
+    infoType     info code
+    ...          argument(s)
+
+Output:
+    return       success (0) or error code
+

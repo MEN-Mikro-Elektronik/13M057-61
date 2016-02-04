@@ -1,0 +1,5 @@
+#!/bin/sh
+mdiswiz -pkg2dsc 13m05761.xml A12a A201 M57_MOD_VX m57
+mdiswiz -pkg2dsc 13m05761.xml A12b  A12_OBMMODS M57_MOD_VX m57_sw
+mdiswiz -pkg2dsc 13m05761.xml F7 F203 P6_MOD_VX p6
+mdiswiz -pkg2dsc 13m05761.xml F1N F1N_OBPCMIP P6_MOD_VX p6_sw

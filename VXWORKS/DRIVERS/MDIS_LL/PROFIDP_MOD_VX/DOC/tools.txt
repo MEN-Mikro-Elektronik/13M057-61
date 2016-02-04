@@ -1,0 +1,95 @@
+Program Description
+===================
+Fri Aug 20 14:16:25  2004
+ 
+Overview of all Programs
+------------------------
+
+profidp_simp     - PROFIDP example for writing a value to a channel
+profidp_test     - PROFIDP test for writing a value to a channel in cyclic mode
+profidp_test_con - PROFIDP test for writing a value to a slave in controlled mode
+profidp_tool     - Interactive tool for PROFIDP driver
+
+Program profidp_simp
+--------------------
+
+Usage:
+   profidp_simp <device> 
+
+Function:
+   PROFIDP example for writing a value to a channel
+
+Options:
+   device       device name   
+   
+Description:
+   Simple example program for the PROFIDP driver   
+   
+   Write a value to a channel (with cyclic data transfer mode)   
+   
+Program profidp_test
+--------------------
+
+Usage:
+   profidp_test <device> 
+
+Function:
+   PROFIDP test for writing a value to a channel in cyclic mode
+
+Options:
+   device       device name   
+   
+Description:
+   Test program for the PROFIDP driver   
+   Wirte values to slave with cyclic data transfer mode   
+   
+Program profidp_test_con
+------------------------
+
+Usage:
+   profidp_test_con <device> 
+
+Function:
+   PROFIDP test for writing a value to a slave in controlled mode
+
+Options:
+   device       device name   
+   
+Description:
+   Test program for the PROFIDP driver   
+   
+   Write values to slave with controlled data transfer    
+   
+Program profidp_tool
+--------------------
+
+Usage:
+   profidp_tool <device> <file> 
+
+Function:
+   Interactive tool for PROFIDP driver
+
+Options:
+   device       device name   
+   file         file name of binary configuration file   
+   
+Description:
+   Test tool for the PROFIDP driver.   
+   This program must be used in cyclic data transfer mode.   
+   I.e. descriptor key CYCLC_DATA_TRANSFER must be TRUE.   
+   
+   The program initializes the profibus with the configuration    
+   data that is read from a file.   
+   
+   When nothing is entered by the user, this program displays   
+   the current slave's diagnostic status and input data   
+   periodically.   
+   
+   The user can however enter the following commands:   
+   h: display this help   
+   s: change current slave   
+   w: modify slave outputs   
+   e: exit   
+   
+   Any bus events (FM2) are displayed as well.   
+   

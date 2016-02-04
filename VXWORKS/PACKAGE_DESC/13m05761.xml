@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- edited with XMLSPY v5 rel. 4 U (http://www.xmlspy.com) by Klaus Popp (MEN Mikro Elektronik GmbH) -->
+<package xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="packagedesc.xsd">
+	<name>13m05761</name>
+	<description>MDIS5 driver package for MEN M57 and P6</description>
+	<date>2014-11-05</date>
+	<revision>1.0</revision>
+	<docroot>DRIVERS/MDIS_LL/PROFIDP_MOD_VX/DOC/main.html</docroot>
+	<modellist>
+		<model>
+			<hwname>M57_MOD_VX</hwname>
+			<description>Profibus DP Interface</description>
+			<devnameprefix>M57</devnameprefix>
+			<devtype>MDIS</devtype>
+			<autoid>
+				<mmoduleid>0x53460039</mmoduleid>
+			</autoid>
+			<busif>M-Module</busif>
+			<settinglist>
+				<setting>
+					<name>ID_CHECK</name>
+					<description>Define wether M-Module ID-PROM is checked</description>
+					<type>U_INT32</type>
+					<value>1</value>
+					<defaultvalue>0</defaultvalue>
+				</setting>
+			</settinglist>
+		</model>
+		<model>
+			<hwname>P6_MOD_VX</hwname>
+			<description>Profibus DP Interface</description>
+			<devnameprefix>P6</devnameprefix>
+			<devtype>MDIS</devtype>
+			<autoid/>
+			<busif>PC-MIP</busif>
+			<settinglist>
+				<setting hidden="true">
+					<name>PCI_VENDOR_ID</name>
+					<description>PCI vendor ID of the device in PCI configuration header</description>
+					<type>U_INT32</type>
+					<defaultvalue>0x1172</defaultvalue>
+				</setting>
+				<setting hidden="true">
+					<name>PCI_DEVICE_ID</name>
+					<description>PCI device ID of the device in PCI configuration header</description>
+					<type>U_INT32</type>
+					<defaultvalue>0x5006</defaultvalue>
+				</setting>
+				<setting hidden="true">
+					<name>PCI_BASEREG_ASSIGN_0</name>
+					<description>mapping between low-level driver address space and PCI base address registers</description>
+					<type>U_INT32</type>
+					<defaultvalue>0</defaultvalue>
+				</setting>
+				<setting>
+					<name>ID_CHECK</name>
+					<description>Define wether M-Module ID-PROM is checked</description>
+					<type>U_INT32</type>
+					<defaultvalue>0</defaultvalue>
+				</setting>
+			</settinglist>
+		</model>
+	</modellist>
+	<settinglist>
+		<setting hidden="true">
+			<name>IRQ_ENABLE</name>
+			<description>enable irq after init</description>
+			<type>U_INT32</type>
+			<value>1</value>
+			<defaultvalue>0</defaultvalue>
+		</setting>
+		<setting>
+			<name>MAX_NUM_SLAVES</name>
+			<description>Maximum number of DP slaves</description>
+			<type>U_INT32</type>
+			<defaultvalue>125</defaultvalue>
+			<maxvalue>125</maxvalue>
+		</setting>
+		<setting>
+			<name>LOWEST_SL_ADDR</name>
+			<description>address of first DP slave, 0xff means auto</description>
+			<type>U_INT32</type>
+			<defaultvalue>0xff</defaultvalue>
+		</setting>
+		<setting>
+			<name>MAX_SLAVE_DIAG_ENTRIES</name>
+			<description>Maximum number of diagnostic entries</description>
+			<type>U_INT32</type>
+			<defaultvalue>125</defaultvalue>
+			<maxvalue>125</maxvalue>
+		</setting>
+		<setting>
+			<name>MAX_SLAVE_DIAG_LEN</name>
+			<description>Maximum data length of one diag entry</description>
+			<type>U_INT32</type>
+			<defaultvalue>244</defaultvalue>
+			<maxvalue>244</maxvalue>
+		</setting>
+		<setting>
+			<name>CLEAR_OUTPUTS</name>
+			<description>Output state when protocol stack enters state CLEAR</description>
+			<type>U_INT32</type>
+			<defaultvalue>0xff</defaultvalue>
+			<choises>
+				<choise>
+					<value>0</value>
+					<description>do not clear outputs</description>
+				</choise>
+				<choise>
+					<value>0xff</value>
+					<description>clear outputs</description>
+				</choise>
+			</choises>
+		</setting>
+		<setting>
+			<name>AUTO_REMOTE_SERVICE</name>
+			<description>See user manual</description>
+			<type>U_INT32</type>
+			<defaultvalue>0xe0</defaultvalue>
+		</setting>
+		<setting>
+			<name>CYCLC_DATA_TRANSFER</name>
+			<description>Operate in cyclic or controlled transfer mode</description>
+			<type>U_INT32</type>
+			<defaultvalue>0xff</defaultvalue>
+			<choises>
+				<choise>
+					<value>0</value>
+					<description>controlled mode</description>
+				</choise>
+				<choise>
+					<value>0xff</value>
+					<description>cyclic mode</description>
+				</choise>
+			</choises>
+		</setting>
+		<setting>
+			<name>MASTER_CLASS_2</name>
+			<description>M2 mode</description>
+			<type>U_INT32</type>
+			<defaultvalue>0x00</defaultvalue>
+			<choises>
+				<choise>
+					<value>0x00</value>
+					<description>SAP54 is responder</description>
+				</choise>
+				<choise>
+					<value>0xff</value>
+					<description>SAP54 is requester</description>
+				</choise>
+			</choises>
+		</setting>
+		<setting>
+			<name>CON_IND_BUF_EL</name>
+			<description>Maximum elements to store in CON/IND buffer</description>
+			<type>U_INT32</type>
+			<defaultvalue>127</defaultvalue>
+		</setting>
+		<setting>
+			<name>ISR_TASK_PRIO</name>
+			<description>VxWorks priority of the ISR-Task</description>
+			<type>U_INT32</type>
+			<defaultvalue>50</defaultvalue>
+		</setting>
+	</settinglist>
+	<swmodulelist>
+		<swmodule>
+			<name>profidp_mod_vx</name>
+			<description>Driver for M57/P6</description>
+			<type>Low Level Driver</type>
+			<makefilepath>PROFIDP_MOD_VX/DRIVER/COM/driver.mak</makefilepath>
+		</swmodule>
+		<swmodule>
+			<name>profidp_mod_vx_simp</name>
+			<description>Simple example program for the PROFIDP_MOD_VX driver</description>
+			<type>Driver Specific Tool</type>
+			<makefilepath>PROFIDP_MOD_VX/EXAMPLE/PROFIDP_SIMP/COM/program.mak</makefilepath>
+		</swmodule>
+		<swmodule>
+			<name>profidp_mod_vx_test</name>
+			<description>Test program for the PROFIDP_MOD_VX driver, cyclic mode</description>
+			<type>Driver Specific Tool</type>
+			<makefilepath>PROFIDP_MOD_VX/EXAMPLE/PROFIDP_TEST/COM/program.mak</makefilepath>
+		</swmodule>
+		<swmodule>
+			<name>profidp_mod_vx_test_con</name>
+			<description>Test program for the PROFIDP_MOD_VX driver, controlled mode</description>
+			<type>Driver Specific Tool</type>
+			<makefilepath>PROFIDP_MOD_VX/EXAMPLE/PROFIDP_TEST_CON/COM/program.mak</makefilepath>
+		</swmodule>
+		<swmodule>
+			<name>profidp_mod_vx_tool</name>
+			<description>Test tool for the PROFIDP_MOD_VX driver</description>
+			<type>Driver Specific Tool</type>
+			<makefilepath>PROFIDP_MOD_VX/TOOLS/PROFIDP_TOOL/COM/program.mak</makefilepath>
+		</swmodule>
+		<swmodule internal="true">
+			<name>profidp_mod_vx_test_restart</name>
+			<description>Test program to restart PROFI-Bus Stack cyclically</description>
+			<type>Driver Specific Tool</type>
+			<makefilepath>PROFIDP_MOD_VX/TEST/PROFIDP_TEST_RESTART/COM/program.mak</makefilepath>
+		</swmodule>
+		<swmodule internal="true">
+			<name>profidp_mod_vx_test_endpruf</name>
+			<description>Test program to write values to slave with cyclic data transfer mode</description>
+			<type>Driver Specific Tool</type>
+			<makefilepath>PROFIDP_MOD_VX/TEST/PROFIDP_TEST_ENDPRUF/COM/program.mak</makefilepath>
+		</swmodule>
+	</swmodulelist>
+</package>
