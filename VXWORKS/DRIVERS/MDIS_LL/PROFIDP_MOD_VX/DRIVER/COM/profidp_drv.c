@@ -576,7 +576,6 @@ static int32 PROFIDP_Init(
 			                      4096,
 			                      (FUNCPTR) PROFIDP_IsrTask,
 			                      (_Vx_usr_arg_t) llHdl, 0, 0, 0, 0, 0, 0, 0, 0, 0 );
-
 	if( llHdl->isrTaskId == TASK_ID_ERROR ) {
 		error = PROFIDP_ERR_CREATING_ISR_TASK;
 		return (Cleanup( llHdl, error));
