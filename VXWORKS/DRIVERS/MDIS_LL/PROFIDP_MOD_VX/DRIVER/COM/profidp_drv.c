@@ -129,6 +129,13 @@ static const char RCSid[]="$Id: profidp_drv.c,v 1.1 2014/11/05 10:51:26 AGromann
 
 #include "profidp_drv_int.h" /* internal Profibus header file */
 
+# ifdef _WRS_VXWORKS_MAJOR
+#	define	PROFIDP_reboothook
+# endif
+# ifdef	PROFIDP_reboothook
+#	include <string.h>
+#	include	<rebootLib.h>
+# endif
 
 /*-----------------------------------------+
 |  DEFINES                                 |
@@ -178,7 +185,6 @@ static int32 PROFIDP_Irq(LL_HANDLE *llHdl );
 static int32 PROFIDP_Info(int32 infoType, ... );
 
 static char* Ident( void );
-static int32 Cleanup(LL_HANDLE *llHdl, int32 retCode);
 
 static int16 PROFIDP_Config ( LL_HANDLE* llHdl, M_SG_BLOCK *blk );
 
@@ -227,7 +233,7 @@ static int16 profi_snd_req_res_usr(
 static int32 GetChannelDir( LL_HANDLE *llHdl, int32 ch);
 static void PROFIDP_sendDiagReqIrq(LL_HANDLE *llHdl);
 static int32 PROFIDP_aliveCheck(LL_HANDLE *llHdl);
-static void PROFIDP_IsrTask(LL_HANDLE *llHdl);
+static int PROFIDP_IsrTask(LL_HANDLE *llHdl);
 
 /**************************** PROFIDP_GetEntry *********************************
  *
@@ -255,6 +261,206 @@ static void PROFIDP_IsrTask(LL_HANDLE *llHdl);
     drvP->irq         = PROFIDP_Irq;
     drvP->info        = PROFIDP_Info;
 }
+
+# ifdef	PROFIDP_reboothook
+static LL_HANDLE *PROFIDP_rebootHook_ll_handle [1],
+		**PROFIDP_rebootHook_next_ll_handle
+		= PROFIDP_rebootHook_ll_handle;
+
+# define	M57_RESET_SEQUENCE(LLHDL)\
+	do {\
+		M57_IRQ_DISABLE( (LLHDL)->ma ); /* disable IRQ on module */\
+		M57_RESET( (LLHDL)->ma, 1); /* reset module (keep reset) */\
+	} while (0)
+
+static int 
+PROFIDP_rebootHook (int const startType)
+{
+	LL_HANDLE **llHdl = PROFIDP_rebootHook_ll_handle;
+	while (PROFIDP_rebootHook_next_ll_handle > llHdl) {
+		LL_HANDLE *const l = *llHdl;
+		M57_RESET_SEQUENCE (l);
+		++llHdl;
+	}
+	return 0;
+}
+# endif
+
+enum PROFIDP_fini_action {
+	PROFIDP_fini_exit,
+	PROFIDP_fini_ISR_task_failed,
+	PROFIDP_fini_windowPointerSemId_failed,
+	PROFIDP_fini_isrTaskSemP_failed,
+	PROFIDP_fini_fwAliveCheckSemP_failed,
+	PROFIDP_fini_con_buf_semP_failed,
+	PROFIDP_fini_req_con_0f_semP_failed,
+	PROFIDP_fini_req_con_f0_semP_failed,
+	PROFIDP_fini_con_ind_buf_alloc_success,
+	PROFIDP_fini_con_ind_buf_alloc_failed,
+	PROFIDP_fini_DESC_access_failed,
+	PROFIDP_fini_DESC_Init_failed,
+	PROFIDP_fini_handle_mem_alloc_failed
+};
+
+/********************************* PROFIDP_fini ********************************
+ *
+ *  Description: Unwind the actions perfomed by PROFIDP_init
+ *		         NOTE: The low-level handle is invalid after this function is
+ *                     called.
+ *
+ *---------------------------------------------------------------------------
+ *  Input......: llHdlP		low-level handle
+ *               error      return value
+ *               action		step to unwind from
+ *  Output.....: return	    retCode
+ *  Globals....: -
+ ****************************************************************************/
+static int32 PROFIDP_fini (
+   LL_HANDLE    **llHdlP,
+   int32 error,
+   enum PROFIDP_fini_action const action
+)
+{
+    LL_HANDLE *llHdl = *llHdlP;
+
+    DBGWRT_1((DBH, "LL - PROFIDP_fini\n"));
+
+	switch (action) {
+	case PROFIDP_fini_exit:
+
+		/*------------------------------+
+		|  de-init hardware             |
+		+------------------------------*/
+
+		M57_RESET_SEQUENCE (llHdl);
+
+# ifdef	PROFIDP_reboothook
+		{
+			LL_HANDLE **last_llh = PROFIDP_rebootHook_next_ll_handle;
+			while (PROFIDP_rebootHook_ll_handle < last_llh) {
+				if (last_llh [-1] == llHdl) {
+#	if	1
+					last_llh [-1]
+					= PROFIDP_rebootHook_next_ll_handle [-1];
+#	else
+					while (PROFIDP_rebootHook_next_ll_handle
+							> last_llh) {
+						last_llh [-1] = *last_llh;
+						++last_llh;
+					}
+#	endif
+					if (PROFIDP_rebootHook_ll_handle
+						== --PROFIDP_rebootHook_next_ll_handle
+						&& OK != rebootHookDelete (
+						PROFIDP_rebootHook)) {
+						DBGWRT_ERR((DBH,
+								" *** PROFIDP_fini: "
+								"cannot uninstall "
+								"reboot hook: %s\n",
+								strerror (errno)));
+					}
+					goto reboothook_found_done;
+				}
+				--last_llh;
+			}
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: could not find "
+					"rebootHook_ll_handle\n"));
+		}
+reboothook_found_done:
+# endif
+
+		/* delete ISR task */
+		if ( taskDelete( llHdl->isrTaskId ) != 0 ) {
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: Error deleting ISR-Task\n"));
+		}
+	case PROFIDP_fini_ISR_task_failed:
+
+		/*------------------------------+
+		|  remove semaphores            |
+		+------------------------------*/
+
+		/* remove semaphore for window pointer */
+		if ((semDelete(llHdl->windowPointerSemId)) != 0) {
+			DBGWRT_ERR((DBH, " *** PROFIDP_fini: "
+					"Error removing window pointer semaphore\n"));
+		}
+	case PROFIDP_fini_windowPointerSemId_failed:
+
+		/* remove semaphore for ISR-Task */
+		if ((OSS_SemRemove( llHdl->osHdl, &llHdl->isrTaskSemP )) != 0) {
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: "
+					"Error removing alive check semaphore\n"));
+		}
+	case PROFIDP_fini_isrTaskSemP_failed:
+
+		/* remove semaphore for alive check */
+		if ((OSS_SemRemove( llHdl->osHdl, &llHdl->fwAliveCheckSemP )) != 0) {
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: "
+					"Error removing alive check semaphore\n"));
+		}
+	case PROFIDP_fini_fwAliveCheckSemP_failed:
+
+		/* remove semaphore for CON/IND buffer */
+		if ((OSS_SemRemove( llHdl->osHdl, &llHdl->con_buf_semP )) != 0) {
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: "
+					"Error removing CON/IND buffer semaphore\n"));
+		}
+	case PROFIDP_fini_con_buf_semP_failed:
+
+		/* remove semaphore for REQ/CON 0f */
+		if ((OSS_SemRemove( llHdl->osHdl, &llHdl->req_con_0f_semP )) != 0) {
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: "
+					"Error removing REQ/CON semaphore\n"));
+		}
+	case PROFIDP_fini_req_con_0f_semP_failed:
+
+		/* remove semaphore for REQ/CON f0 */
+		if ((OSS_SemRemove( llHdl->osHdl, &llHdl->req_con_f0_semP )) != 0) {
+			DBGWRT_ERR((DBH," *** PROFIDP_fini: "
+					"Error removing REQ/CON semaphore\n"));
+		}
+	case PROFIDP_fini_req_con_f0_semP_failed:
+
+
+	case PROFIDP_fini_con_ind_buf_alloc_success:
+		/*------------------------------+
+		|  free memory                  |
+		+------------------------------*/
+
+		/* free CON/IND Buffer */
+		OSS_MemFree(llHdl->osHdl, llHdl->con_ind_buf,
+				llHdl->con_ind_memSize);
+	case PROFIDP_fini_con_ind_buf_alloc_failed:
+
+	case PROFIDP_fini_DESC_access_failed:
+		/*------------------------------+
+		|  close handles                |
+		+------------------------------*/
+		/* clean up desc */
+		if (llHdl->descHdl)
+			DESC_Exit(&llHdl->descHdl);
+	case PROFIDP_fini_DESC_Init_failed:
+
+		/* clean up debug */
+		DBGEXIT((&DBH));
+
+		/* free my handle */
+		OSS_MemFree(llHdl->osHdl, (int8*)llHdl, llHdl->memAlloc);
+	case PROFIDP_fini_handle_mem_alloc_failed:
+
+		/*------------------------------+
+		|  clean up memory              |
+		+------------------------------*/
+		*llHdlP = NULL;		/* set low-level driver handle to NULL */
+
+	}
+
+	/*------------------------------+
+	|  return error code            |
+	+------------------------------*/
+	return(error);
+}
+
 
 /******************************** PROFIDP_Init ***********************************
  *
@@ -342,7 +548,8 @@ static int32 PROFIDP_Init(
 	/* alloc */
     if ((llHdl = (LL_HANDLE*)OSS_MemGet(
     				osHdl, sizeof(LL_HANDLE), &gotsize)) == NULL)
-       return(ERR_OSS_MEM_ALLOC);
+		return (PROFIDP_fini (&llHdl, ERR_OSS_MEM_ALLOC,
+				PROFIDP_fini_handle_mem_alloc_failed));
 
 	/* clear */
     OSS_MemFill(osHdl, gotsize, (char*)llHdl, 0x00);
@@ -380,29 +587,34 @@ static int32 PROFIDP_Init(
     +------------------------------*/
 	/* prepare access */
     if ((error = DESC_Init(descP, osHdl, &llHdl->descHdl)))
-		return( Cleanup(llHdl,error) );
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_Init_failed));
 
     /* DEBUG_LEVEL_DESC */
     if ((error = DESC_GetUInt32(llHdl->descHdl, OSS_DBG_DEFAULT,
-								&value, "DEBUG_LEVEL_DESC")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&value, "DEBUG_LEVEL_DESC")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
 	DESC_DbgLevelSet(llHdl->descHdl, value);	/* set level */
 
     /* DEBUG_LEVEL */
     if ((error = DESC_GetUInt32(llHdl->descHdl, OSS_DBG_DEFAULT,
-								&llHdl->dbgLevel, "DEBUG_LEVEL")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->dbgLevel, "DEBUG_LEVEL")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
     DBGWRT_1((DBH, "LL - PROFIDP_Init\n"));
 
     /* ID_CHECK */
-    if ((error = DESC_GetUInt32(llHdl->descHdl, /*TRUE*/ FALSE, /* P6 has no ID */
-								&llHdl->idCheck, "ID_CHECK")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+    if ((error = DESC_GetUInt32(llHdl->descHdl,
+					/*TRUE*/ FALSE /* P6 has no ID */,
+					&llHdl->idCheck, "ID_CHECK")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
     /*------------------------------------+
     |  scan M57 specific descriptor keys  |
@@ -411,94 +623,121 @@ static int32 PROFIDP_Init(
     /* address assignment mode is always DP_AAM_ARRAY */
 	llHdl->addrAssignMode = DP_AAM_ARRAY;
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: ADDR_ASSIGN_MODE = %08x\n", llHdl->addrAssignMode));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: ADDR_ASSIGN_MODE = %08x\n",
+			llHdl->addrAssignMode));
 
 
     /* max number of slaves */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_MAX_NUMBER_SLAVES,
-								&llHdl->maxNumSlaves, "MAX_NUM_SLAVES")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->maxNumSlaves, "MAX_NUM_SLAVES")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: DP_MAX_NUMBER_SLAVES = %08x\n", llHdl->maxNumSlaves));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: DP_MAX_NUMBER_SLAVES = %08x\n",
+			llHdl->maxNumSlaves));
 
     /* lowest slave address */
     if ((error = DESC_GetUInt32(llHdl->descHdl, 0xff,
-								&lowSlAddr, "LOWEST_SL_ADDR")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&lowSlAddr, "LOWEST_SL_ADDR")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 	llHdl->lowest_slave_address = (u_int8) lowSlAddr;
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: DP_LOWEST_SL_ADDR = %02x\n", llHdl->lowest_slave_address));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: DP_LOWEST_SL_ADDR = %02x\n",
+			llHdl->lowest_slave_address));
 
 
     /* max slave diagnosis entries */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_MAX_SLAVE_DIAG_ENTRIES,
-								&llHdl->maxSlaveDiagEntries, "MAX_SLAVE_DIAG_ENTRIES")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->maxSlaveDiagEntries, "MAX_SLAVE_DIAG_ENTRIES")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: MAX_SLAVE_DIAG_ENTRIES = %08x\n", llHdl->maxSlaveDiagEntries));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: MAX_SLAVE_DIAG_ENTRIES = %08x\n",
+			llHdl->maxSlaveDiagEntries));
 
     /* max slave diagnosis data length */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_MAX_SLAVE_DIAG_LEN,
-								&llHdl->maxSlaveDiagLen, "MAX_SLAVE_DIAG_LEN")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->maxSlaveDiagLen, "MAX_SLAVE_DIAG_LEN")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: MAX_SLAVE_DIAG_LEN = %08x\n", llHdl->maxSlaveDiagLen));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: MAX_SLAVE_DIAG_LEN = %08x\n",
+			llHdl->maxSlaveDiagLen));
 
 
     /* clear outputs when entering CLEAR state */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_CLEAR_OUTPUTS,
-								&llHdl->clearOutputs, "CLEAR_OUTPUTS")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->clearOutputs, "CLEAR_OUTPUTS")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: CLEAR_OUTPUTS = %08x\n", llHdl->clearOutputs));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: CLEAR_OUTPUTS = %08x\n",
+			llHdl->clearOutputs));
 
 
     /* automatically respond to M2 services */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_AUTO_REMOTE_SERVICE,
-								&llHdl->autoRemoteService, "AUTO_REMOTE_SERVICE")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->autoRemoteService, "AUTO_REMOTE_SERVICE")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: AUTO_REMOTE_SERVICE = %08x\n", llHdl->autoRemoteService));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: AUTO_REMOTE_SERVICE = %08x\n",
+			llHdl->autoRemoteService));
 
 
     /* cyclic data transfer */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_CYCLC_DATA_TRANSFER,
-								&llHdl->cyclicDataTransfer, "CYCLC_DATA_TRANSFER")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->cyclicDataTransfer, "CYCLC_DATA_TRANSFER")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: CYCLC_DATA_TRANSFER = %08x\n", llHdl->cyclicDataTransfer));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: CYCLC_DATA_TRANSFER = %08x\n",
+			llHdl->cyclicDataTransfer));
 
     /* use master class 2 functionality */
     if ((error = DESC_GetUInt32(llHdl->descHdl, PB_FALSE,
-								&llHdl->masterClass2, "MASTER_CLASS_2")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&llHdl->masterClass2, "MASTER_CLASS_2")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
 
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: MASTER_CLASS_2 = %08x\n", llHdl->masterClass2));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: MASTER_CLASS_2 = %08x\n",
+			llHdl->masterClass2));
 
     /* Priority of ISR-Task */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_ISR_TASK_PRIO,
-								&isr_task_prio, "ISR_TASK_PRIO")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&isr_task_prio, "ISR_TASK_PRIO")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
     DBGWRT_1((DBH, "LL - PROFIDP_Init: ISR_TASK_PRIO = %08x\n", isr_task_prio));
 
     /* size of CON/IND Buffer */
     if ((error = DESC_GetUInt32(llHdl->descHdl, DP_CON_IND_BUF_EL,
-								&elements_con_ind, "CON_IND_BUF_EL")) &&
-		error != ERR_DESC_KEY_NOTFOUND)
-		return( Cleanup(llHdl,error) );
+					&elements_con_ind, "CON_IND_BUF_EL")) &&
+			error != ERR_DESC_KEY_NOTFOUND)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_DESC_access_failed));
     llHdl->con_ind_buf_size = elements_con_ind * CON_IND_BUF_ELEMENT_SIZE;
-    DBGWRT_2((DBH, "LL - PROFIDP_Init: CON_IND_BUF_SIZE = %08x\n", llHdl->con_ind_buf_size));
+    DBGWRT_2((DBH, "LL - PROFIDP_Init: CON_IND_BUF_SIZE = %08x\n",
+			llHdl->con_ind_buf_size));
 
-	if ( (llHdl->con_ind_buf = (u_int8*) OSS_MemGet( osHdl, llHdl->con_ind_buf_size, &gotsize)) == NULL)
-		return(Cleanup(llHdl, ERR_OSS_MEM_ALLOC));
+# if	0	/* is this missing? */
+	DESC_Exit(&llHdl->descHdl);
+	llHdl->descHdl = 0;
+# endif
+
+	if ( (llHdl->con_ind_buf = (u_int8*) OSS_MemGet( osHdl,
+			llHdl->con_ind_buf_size, &gotsize)) == NULL)
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_con_ind_buf_alloc_failed));
 
     OSS_MemFill(osHdl, gotsize, (char*) llHdl->con_ind_buf, 0x00);
 
@@ -515,14 +754,17 @@ static int32 PROFIDP_Init(
 		int modId      = m_read( (U_INT32_OR_64) llHdl->ma, 1);
 
 		if (modIdMagic != MOD_ID_MAGIC) {
-			DBGWRT_ERR((DBH," *** PROFIDP_Init: illegal magic=0x%04x\n",modIdMagic));
+			DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+					"illegal magic=0x%04x\n",modIdMagic));
 			error = ERR_LL_ILL_ID;
-			return( Cleanup(llHdl,error) );
+			return (PROFIDP_fini (&llHdl, error,
+					PROFIDP_fini_con_ind_buf_alloc_success));
 		}
 		if (modId != MOD_ID) {
 			DBGWRT_ERR((DBH," *** PROFIDP_Init: illegal id=%d\n",modId));
 			error = ERR_LL_ILL_ID;
-			return( Cleanup(llHdl,error) );
+			return (PROFIDP_fini (&llHdl, error,
+					PROFIDP_fini_con_ind_buf_alloc_success));
 		}
 	}
 
@@ -532,39 +774,56 @@ static int32 PROFIDP_Init(
     +------------------------------*/
 
 	/* create semaphore for REQ/CON f0 */
-	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 0, &llHdl->req_con_f0_semP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Init: Error creating REQ/CON semaphore\n"));
-		return( Cleanup(llHdl,error) );
+	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 0,
+			&llHdl->req_con_f0_semP )) != 0) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+				"Error creating REQ/CON semaphore\n"));
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_req_con_f0_semP_failed));
 	}
 
 	/* create semaphore for REQ/CON 0f */
-	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 0, &llHdl->req_con_0f_semP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Init: Error creating REQ/CON semaphore\n"));
-		return( Cleanup(llHdl,error) );
+	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 0,
+			&llHdl->req_con_0f_semP )) != 0) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+				"Error creating REQ/CON semaphore\n"));
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_req_con_0f_semP_failed));
 	}
 
 	/* create semaphore for CON/IND buffer */
-	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_COUNT, 0, &llHdl->con_buf_semP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Init: Error creating CON/IND buffer semaphore\n"));
-		return( Cleanup(llHdl,error) );
+	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_COUNT, 0,
+			&llHdl->con_buf_semP )) != 0) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+				"Error creating CON/IND buffer semaphore\n"));
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_con_buf_semP_failed));
 	}
 
 	/* create semaphore for cyclic alive check */
-	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 1, &llHdl->fwAliveCheckSemP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Init: Error creating alive check semaphore\n"));
-		return( Cleanup(llHdl,error) );
+	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 1,
+			&llHdl->fwAliveCheckSemP )) != 0) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+				"Error creating alive check semaphore\n"));
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_fwAliveCheckSemP_failed));
 	}
 
 	/* create semaphore for triggering ISR-Task */
-	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 0, &llHdl->isrTaskSemP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Init: Error creating ISR-Task semaphore\n"));
-		return( Cleanup(llHdl,error) );
+	if ((OSS_SemCreate( llHdl->osHdl, OSS_SEM_BIN, 0,
+			&llHdl->isrTaskSemP )) != 0) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+				"Error creating ISR-Task semaphore\n"));
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_isrTaskSemP_failed));
 	}
 
 	llHdl->windowPointerSemId = semMCreate( SEM_Q_PRIORITY );
 	if( llHdl->windowPointerSemId == SEM_ID_NULL ) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Init: Error creating window pointer semaphore\n"));
-		return( Cleanup(llHdl,error) );
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: "
+				"Error creating window pointer semaphore\n"));
+		return (PROFIDP_fini (&llHdl, error,
+				PROFIDP_fini_windowPointerSemId_failed));
 	}
 
     /*------------------------------+
@@ -575,10 +834,11 @@ static int32 PROFIDP_Init(
 			                      0,
 			                      4096,
 			                      (FUNCPTR) PROFIDP_IsrTask,
-			                      (_Vx_usr_arg_t) llHdl, 0, 0, 0, 0, 0, 0, 0, 0, 0 );
+			                      (_Vx_usr_arg_t) llHdl,
+								  0, 0, 0, 0, 0, 0, 0, 0, 0 );
 	if( llHdl->isrTaskId == TASK_ID_ERROR ) {
 		error = PROFIDP_ERR_CREATING_ISR_TASK;
-		return (Cleanup( llHdl, error));
+		return (PROFIDP_fini (&llHdl, error, PROFIDP_fini_ISR_task_failed));
 	}
 
     /*------------------------------+
@@ -599,7 +859,7 @@ static int32 PROFIDP_Init(
 		DBGWRT_ERR((DBH," *** PROFIDP_Init: Sync_code = %08x\n", down_p->sync_code));
 		DBGWRT_ERR((DBH," *** PROFIDP_Init: &dp_fw[0] = %08x\n", dp_fw));
 		error = PROFIDP_ERR_VALIDATE_FW;
-		return (Cleanup( llHdl, error));
+		return (PROFIDP_fini (&llHdl, error, PROFIDP_fini_exit));
 	}
 	/*--- count number of segments ---*/
 		for(segcnt=0; seg_p->offset; seg_p++, segcnt++)
@@ -607,6 +867,29 @@ static int32 PROFIDP_Init(
 
 	DBGWRT_2((DBH,"LL - PROFIDP_Init: %d segments\n", segcnt ));
 	DBGWRT_1((DBH,"\nM57 Base Address = %08p\n", (void*) llHdl->ma ));
+
+# ifdef	PROFIDP_reboothook
+	if (1 [&PROFIDP_rebootHook_ll_handle]
+			< PROFIDP_rebootHook_next_ll_handle) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: not enough elements in "
+				"PROFIDP_rebootHook_ll_handle "
+				"(currently %u)\n",
+				1 [&PROFIDP_rebootHook_ll_handle]
+				- PROFIDP_rebootHook_ll_handle));
+		error = PROFIDP_ERR_CONFIG;
+		return (PROFIDP_fini (&llHdl, error, PROFIDP_fini_exit));
+	}
+	if (PROFIDP_rebootHook_ll_handle == PROFIDP_rebootHook_next_ll_handle
+			&& OK != rebootHookAdd (PROFIDP_rebootHook)) {
+		DBGWRT_ERR((DBH," *** PROFIDP_Init: cannot install "
+				"reboot hook: %s\n",
+				strerror (errno)));
+		error = PROFIDP_ERR_CONFIG;
+		return (PROFIDP_fini (&llHdl, error, PROFIDP_fini_exit));
+	}
+	*PROFIDP_rebootHook_next_ll_handle++ = llHdl;
+# endif
+
 	/*--- reset module ---*/
 
 	M57_RESET( llHdl->ma, 1);			/* reset module (keep reset)*/
@@ -640,7 +923,7 @@ static int32 PROFIDP_Init(
 		     TWISTLONG_FW (seg_p->loadaddr), TWISTLONG_FW (seg_p->length), llHdl) < 0)
 		{
 			error = PROFIDP_ERR_VERIFY_FW;
-			return ( Cleanup( llHdl, error) );
+			return (PROFIDP_fini (&llHdl, error, PROFIDP_fini_exit));
 		 }
 	}
 
@@ -700,64 +983,12 @@ static int32 PROFIDP_Exit(
    LL_HANDLE    **llHdlP
 )
 {
-    LL_HANDLE *llHdl = *llHdlP;
 	int32 error = 0;
+    LL_HANDLE *llHdl = *llHdlP;
 
     DBGWRT_1((DBH, "LL - PROFIDP_Exit\n"));
 
-    /*------------------------------+
-    |  de-init hardware             |
-    +------------------------------*/
-
-	M57_IRQ_DISABLE( llHdl->ma );	     /* disable IRQ on module */
-	M57_RESET( llHdl->ma, 1);	         /* reset module (keep reset) */
-
-    /*------------------------------+
-    |  remove semaphores            |
-    +------------------------------*/
-
-	/* remove semaphore for REQ/CON f0 */
-	if ((OSS_SemRemove( llHdl->osHdl, &llHdl->req_con_f0_semP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error removing REQ/CON semaphore\n"));
-	}
-
-	/* remove semaphore for REQ/CON 0f */
-	if ((OSS_SemRemove( llHdl->osHdl, &llHdl->req_con_0f_semP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error removing REQ/CON semaphore\n"));
-	}
-
-	/* remove semaphore for CON/IND buffer */
-	if ((OSS_SemRemove( llHdl->osHdl, &llHdl->con_buf_semP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error removing CON/IND buffer semaphore\n"));
-	}
-
-	/* remove semaphore for alive check */
-	if ((OSS_SemRemove( llHdl->osHdl, &llHdl->fwAliveCheckSemP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error removing alive check semaphore\n"));
-	}
-
-	/* delete ISR task */
-	if ( taskDelete( llHdl->isrTaskId ) != 0 ) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error deleting ISR-Task\n"));
-	}
-
-	/* remove semaphore for ISR-Task */
-	if ((OSS_SemRemove( llHdl->osHdl, &llHdl->isrTaskSemP )) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error removing alive check semaphore\n"));
-	}
-
-	/* remove semaphore for window pointer */
-	if ((semDelete(llHdl->windowPointerSemId)) != 0) {
-		DBGWRT_ERR((DBH," *** PROFIDP_Exit: Error removing window pointer semaphore\n"));
-	}
-
-    /*------------------------------+
-    |  clean up memory              |
-    +------------------------------*/
-	*llHdlP = NULL;		/* set low-level driver handle to NULL */
-	error = Cleanup(llHdl,error);
-
-	return(error);
+	return (PROFIDP_fini (llHdlP, error, PROFIDP_fini_exit));
 }
 
 /****************************** PROFIDP_Read *************************************
@@ -1667,7 +1898,7 @@ static int32 PROFIDP_Irq(
  *  Output.....:  return   void
  *  Globals....:  ---
  ****************************************************************************/
-static void PROFIDP_IsrTask(LL_HANDLE *llHdl)
+static int PROFIDP_IsrTask(LL_HANDLE *llHdl)
 {
 	u_int16 con_size;
 	T_PROFI_SERVICE_DESCR      c_sdb;
@@ -1678,12 +1909,20 @@ static void PROFIDP_IsrTask(LL_HANDLE *llHdl)
 
 	while( 1 ) {
 
-		OSS_SemWait( llHdl->osHdl, llHdl->isrTaskSemP, OSS_SEM_WAITFOREVER );
+		if (0 != taskSafe ()) {
+			perror ("taskSafe");
+			return 1;
+		}
+		if (0 != OSS_SemWait( llHdl->osHdl,
+				llHdl->isrTaskSemP, OSS_SEM_WAITFOREVER ))
+			
+			return 1;
 		IDBGWRT_1((DBH, " >>> !!! PROFIDP_IrqTask <<<: ma = 0x%08x \n", llHdl->ma));
 
 		/* wait for window pointer to get free */
 		if( ERROR == semTake( llHdl->windowPointerSemId, WAIT_FOREVER ) ) {
 			DBGWRT_ERR((DBH," >>> PROFIDP_IrqTask: Error taking window pointer semaphore\n"));
+			return 1;
 		}
 
 
@@ -1705,6 +1944,7 @@ static void PROFIDP_IsrTask(LL_HANDLE *llHdl)
 				else {
 					if ((OSS_SemSignal( llHdl->osHdl, llHdl->req_con_f0_semP )) != 0) {
 						DBGWRT_ERR((DBH," *** PROFIDP_IrqTask: Error signaling REQ/CON semaphore\n"));
+						return 1;
 					}
 				}
 				llHdl->reqPending = FALSE;
@@ -1742,6 +1982,7 @@ static void PROFIDP_IsrTask(LL_HANDLE *llHdl)
 					/* signal semaphore */
 					if ((OSS_SemSignal( llHdl->osHdl, llHdl->req_con_0f_semP )) != 0) {
 						DBGWRT_ERR((DBH," *** PROFIDP_Init: Error signaling REQ/CON semaphore\n"));
+						return 1;
 					}
 
 					/* send diag request immediately after pendig user request */
@@ -1762,6 +2003,7 @@ static void PROFIDP_IsrTask(LL_HANDLE *llHdl)
 						if (llHdl->con_ind_buf_full != 0x01) {
 							if ((OSS_SemSignal( llHdl->osHdl, llHdl->con_buf_semP )) != 0) {
 								DBGWRT_ERR((DBH," *** PROFIDP_Init: Error signaling CON/IND buffer semaphore\n"));
+								return 1;
 							}
 						}
 
@@ -1889,6 +2131,11 @@ static void PROFIDP_IsrTask(LL_HANDLE *llHdl)
 
 		if( ERROR == semGive( llHdl->windowPointerSemId ) ) {
 			DBGWRT_ERR((DBH," >>> PROFIDP_IrqTask: Error giving window pointer semaphore\n"));
+			return 1;
+		}
+		if (0 != taskUnsafe ()) {
+			perror ("taskUnsafe");
+			return 1;
 		}
 
 		/* taskDelay( 1000 ); */
@@ -2034,50 +2281,6 @@ static char* Ident( void )	/* nodoc */
     return( "PROFIDP - PROFIDP low level driver: $Id: profidp_drv.c,v 1.1 2014/11/05 10:51:26 AGromann Exp $" );
 }
 
-/********************************* Cleanup **********************************
- *
- *  Description: Close all handles, free memory and return error code
- *		         NOTE: The low-level handle is invalid after this function is
- *                     called.
- *
- *---------------------------------------------------------------------------
- *  Input......: llHdl		low-level handle
- *               retCode    return value
- *  Output.....: return	    retCode
- *  Globals....: -
- ****************************************************************************/
-static int32 Cleanup(
-   LL_HANDLE    *llHdl,
-   int32        retCode		/* nodoc */
-)
-{
-    /*------------------------------+
-    |  close handles                |
-    +------------------------------*/
-	/* clean up desc */
-	if (llHdl->descHdl)
-		DESC_Exit(&llHdl->descHdl);
-
-	/* clean up debug */
-	DBGEXIT((&DBH));
-
-    /*------------------------------+
-    |  free memory                  |
-    +------------------------------*/
-
-	/* free CON/IND Buffer */
-    if (llHdl->con_ind_buf)
-    	OSS_MemFree(llHdl->osHdl, llHdl->con_ind_buf, llHdl->con_ind_memSize);
-
-
-    /* free my handle */
-    OSS_MemFree(llHdl->osHdl, (int8*)llHdl, llHdl->memAlloc);
-
-    /*------------------------------+
-    |  return error code            |
-    +------------------------------*/
-	return(retCode);
-}
 
 
 /***************************** PROFIDP_Config ******************************
